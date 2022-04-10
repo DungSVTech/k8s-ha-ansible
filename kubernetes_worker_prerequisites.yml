@@ -1,0 +1,97 @@
+---
+- name: Generate Hosts File
+  hosts: worker
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Stop firewall
+      service:
+        name: firewalld
+        state: stopped
+        enabled: False
+    - name: Letting iptables see bridged traffic
+      copy:
+        src: /opt/k8s/files/k8s.conf
+        dest: /etc/sysctl.d/k8s.conf
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Create the .conf file to load the modules at bootup
+      copy:
+        src: /opt/k8s/files/docker.conf
+        dest: /etc/modules-load.d/docker.conf
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Load modules at bootup
+      modprobe:
+        name: '{{ item }}'
+        state: present
+      with_items:
+        - overlay
+        - br_netfilter
+    - name: Reload sysctl config for iptables
+      command: sysctl --system 
+    - name: Disable SWAP
+      command: swapoff -a
+    - name: Remove swap from fstab
+      command: sed -i '/swap/d' /etc/fstab
+    - name: Disable SELinux
+      selinux:
+        state: disabled
+    - name: Reboot the machine
+      reboot:
+    - name: Upgrade all packages
+      yum: name=* state=latest
+    - name: Install pre packages
+      yum:
+        name: '{{ item }}'
+        state: latest
+      with_items:
+        - yum-utils
+        - nfs-utils
+        - bash-completion
+        - git
+    - name: Add repo for Installation Docker
+      command: sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    - name: Install Docker
+      package:
+        name: docker-ce
+        state: latest
+      become: yes
+    - name: Change cgroup to systemd
+      copy:
+        src: /opt/k8s/files/daemon.json
+        dest: /etc/docker/daemon.json
+        owner: root
+        group: root
+        mode: '0644' 
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      become: yes
+    - name: Copy /etc/yum.repos.d/kubernetes.repo
+      copy:
+        src: /opt/ansible/files/kubernetes.repo
+        dest: /etc/yum.repos.d/kubernetes.repo
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Upgrade all packages
+      yum: name=* state=latest
+    - name: Install Kubernetes Package
+      yum:
+        name: "{{packages}}"
+        state: present
+      vars:
+        packages:
+          - kubelet
+          - kubeadm
+          - kubectl
+    - name: Enable / Start kubelet Service
+      service:
+        name: kubelet
+        state: started
+        enabled: yes
